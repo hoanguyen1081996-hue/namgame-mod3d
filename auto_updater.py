@@ -28,8 +28,8 @@ import urllib.request
 APP_VERSION = "1.3.70"
 
 DEFAULT_UPDATE_CONFIG: Dict[str, Any] = {
-    "_comment": "Điền 'owner/repo' GitHub (VD: 'namgame/mod3d-update') hoặc URL trực tiếp tới manifest.json.",
-    "github_repo": "",
+    "_comment": "Cấu hình tự động cập nhật từ GitHub Repo chính thức.",
+    "github_repo": "hoanguyen1081996-hue/namgame-mod3d",
     "branch": "main",
     "manifest_url": "",
     "auto_check_on_startup": True,

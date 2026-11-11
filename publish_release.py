@@ -184,25 +184,72 @@ def create_portable_zip(proj_dir: Path, version: str, out_zip: Path) -> Path:
     return out_zip
 
 
+def _find_gh_cli() -> str:
+    default_gh = Path(r"C:\Program Files\GitHub CLI\gh.exe")
+    if default_gh.is_file():
+        return str(default_gh)
+    return "gh"
+
+
+def publish_github_release_asset(
+    proj_dir: Path, version: str, repo: str, changelog: str
+) -> None:
+    exe_path = proj_dir / "Mod3D_Standalone.exe"
+    if not exe_path.is_file():
+        raise FileNotFoundError("Không tìm thấy Mod3D_Standalone.exe để đăng Release.")
+    gh_bin = _find_gh_cli()
+    tag = f"v{version}"
+    notes = changelog or f"Bản phát hành {tag}"
+
+    # Kiểm tra xem tag đã tồn tại chưa; nếu có thì upload đè (--clobber), chưa có thì tạo mới
+    chk = subprocess.run(
+        [gh_bin, "release", "view", tag, "--repo", repo],
+        cwd=str(proj_dir),
+        capture_output=True,
+    )
+    if chk.returncode == 0:
+        subprocess.run(
+            [
+                gh_bin,
+                "release",
+                "upload",
+                tag,
+                str(exe_path),
+                "--clobber",
+                "--repo",
+                repo,
+            ],
+            cwd=str(proj_dir),
+            check=True,
+        )
+    else:
+        subprocess.run(
+            [
+                gh_bin,
+                "release",
+                "create",
+                tag,
+                str(exe_path),
+                "--title",
+                f"Mod 3D {tag}",
+                "--notes",
+                notes,
+                "--repo",
+                repo,
+            ],
+            cwd=str(proj_dir),
+            check=True,
+        )
+    print(f"[GITHUB RELEASE OK] Đã đăng tải {exe_path.name} lên Release {tag} ({repo})!")
+
+
 def git_push_hotfix(proj_dir: Path, message: str) -> None:
     if not (proj_dir / ".git").exists():
         print(
             "[GIT] Thư mục chưa khởi tạo git remote. Bỏ qua bước tự push (chỉ cập nhật manifest cục bộ)."
         )
         return
-    subprocess.run(
-        [
-            "git",
-            "add",
-            "release/manifest.json",
-            "memory_config.json",
-            "_guard_catalog.json",
-            "data/inject_catalog.db",
-            "auto_updater.py",
-        ],
-        cwd=str(proj_dir),
-        check=True,
-    )
+    subprocess.run(["git", "add", "-A"], cwd=str(proj_dir), check=True)
     subprocess.run(
         ["git", "commit", "-m", message],
         cwd=str(proj_dir),
@@ -259,6 +306,11 @@ def main() -> int:
         action="store_true",
         help="Tự động git commit & git push lên GitHub sau khi cập nhật manifest",
     )
+    parser.add_argument(
+        "--gh-release",
+        action="store_true",
+        help="Tự động tạo/cập nhật GitHub Release và tải Mod3D_Standalone.exe lên bằng gh CLI",
+    )
     args = parser.parse_args()
 
     proj_dir = Path(__file__).resolve().parent
@@ -287,6 +339,17 @@ def main() -> int:
     if args.push:
         git_push_hotfix(
             proj_dir, args.changelog or f"chore(release): update v{version}"
+        )
+
+    if args.gh_release:
+        repo_name = str(cfg.get("github_repo", "")).strip()
+        if not repo_name:
+            raise ValueError("Chưa có github_repo trong update_config.json để tạo Release.")
+        publish_github_release_asset(
+            proj_dir=proj_dir,
+            version=version,
+            repo=repo_name,
+            changelog=args.changelog,
         )
 
     return 0
