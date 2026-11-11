@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.spec
+build/
+dist/
+*.exe
+*.exe.new
+*.upd_tmp
+_mod3d_apply_update.cmd
+fav_sets.json
+seal_prefs.json
+ui_prefs.json
+update_config.json

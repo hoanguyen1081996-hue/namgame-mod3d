@@ -1,0 +1,13 @@
+{
+  "_help": "Link tải đã đóng gói trong EXE. Khách chỉ cần ViethoaGuard.exe. File catalog.json cạnh EXE chỉ dùng khi muốn đổi link mà không build lại.",
+  "files": {
+    "dhp": {
+      "url": "https://drive.google.com/file/d/18W_vTPbIF8p6UTx_rGi0CqBTU8b-5Ljp/view?usp=sharing",
+      "sha256": ""
+    },
+    "dll": {
+      "url": "https://drive.google.com/file/d/1-fnJBsNqZtRh88-Lil3CPGFuv9E9GpMh/view?usp=sharing",
+      "sha256": ""
+    }
+  }
+}

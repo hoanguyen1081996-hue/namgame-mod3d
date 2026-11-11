@@ -1,0 +1,19 @@
+{
+  "_comment": "Điền mẫu AOB và danh sách offset con trỏ của MSango.bin cho ô CƯỠI (ride) và VŨ KHÍ (weapon).",
+  "process_name": "MSango.bin",
+  "pointer_size": 4,
+  "ride": {
+    "aob_pattern": "",
+    "pattern_offset": 0,
+    "offsets": [],
+    "payload_field": "mesh",
+    "scan_data": false
+  },
+  "weapon": {
+    "aob_pattern": "",
+    "pattern_offset": 0,
+    "offsets": [],
+    "payload_field": "mesh",
+    "scan_data": false
+  }
+}
