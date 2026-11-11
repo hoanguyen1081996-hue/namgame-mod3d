@@ -1,0 +1,4 @@
+*.json -text
+*.db binary
+*.png binary
+*.ico binary
