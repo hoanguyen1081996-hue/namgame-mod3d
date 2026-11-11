@@ -177,9 +177,44 @@ class GitHubAutoUpdater:
             body = resp.read().decode("utf-8", errors="replace")
             return json.loads(body)
 
+    def _resolve_latest_ref(self, repo: str, branch: str, cfg: Dict[str, Any]) -> str:
+        """
+        Truy vấn mã SHA thực thời của nhánh `branch` thông qua giao thức Git Smart HTTP (`info/refs`)
+        để vượt hoàn toàn cả bộ nhớ đệm CDN 5 phút của `raw.githubusercontent.com` lẫn giới hạn
+        60 req/giờ của REST API (giúp Hotfix đồng bộ tức thời 0 giây ngay sau khi `git push`).
+        """
+        if not repo:
+            return branch
+        ctx = ssl.create_default_context()
+        # Ưu tiên 1: Git Smart HTTP info/refs (không giới hạn rate-limit, không dính cache CDN 5 phút)
+        try:
+            refs_url = f"https://github.com/{repo}.git/info/refs?service=git-upload-pack"
+            req = urllib.request.Request(refs_url, headers={"User-Agent": "git/2.43.0"})
+            with urllib.request.urlopen(req, timeout=6.0, context=ctx) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+            m = re.search(
+                rf"([0-9a-f]{{40}})\s+refs/heads/{re.escape(branch)}(?:\x00|\s|$)",
+                body,
+            )
+            if m:
+                return m.group(1)
+        except Exception:
+            pass
+
+        # Ưu tiên 2: GitHub REST API (dành cho repo private có cấu hình github_token)
+        try:
+            commit_api = f"https://api.github.com/repos/{repo}/commits/{branch}"
+            data = self._http_get_json(commit_api, cfg, timeout=6.0)
+            sha = str(data.get("sha", "")).strip()
+            if len(sha) >= 7:
+                return sha
+        except Exception:
+            pass
+        return branch
+
     def check_for_updates(self) -> UpdateCheckResult:
         """
-        Kiểm tra bản cập nhật từ `manifest.json` trên GitHub Raw (ưu tiên)
+        Kiểm tra bản cập nhật từ `manifest.json` trên GitHub Raw (ưu tiên theo commit SHA mới nhất)
         hoặc tự động fallback sang GitHub Releases API (`/releases/latest`).
         """
         cfg = self.load_config()
@@ -190,9 +225,22 @@ class GitHubAutoUpdater:
         if not manifest_url and not repo:
             return UpdateCheckResult(configured=False, local_version=self.current_version)
 
+        need_gh_ref = bool(repo) and (
+            not manifest_url
+            or manifest_url.startswith(f"https://raw.githubusercontent.com/{repo}/")
+        )
+        ref_commit = self._resolve_latest_ref(repo, branch, cfg) if need_gh_ref else branch
         if not manifest_url and repo:
             manifest_url = (
-                f"https://raw.githubusercontent.com/{repo}/{branch}/release/manifest.json"
+                f"https://raw.githubusercontent.com/{repo}/{ref_commit}/release/manifest.json"
+            )
+        elif (
+            repo
+            and ref_commit != branch
+            and manifest_url.startswith(f"https://raw.githubusercontent.com/{repo}/{branch}/")
+        ):
+            manifest_url = manifest_url.replace(
+                f"/{repo}/{branch}/", f"/{repo}/{ref_commit}/", 1
             )
 
         # 1. Thử đọc manifest.json (hỗ trợ cả Hotfix file lẻ + Full EXE)
@@ -200,7 +248,7 @@ class GitHubAutoUpdater:
         if manifest_url:
             try:
                 manifest = self._http_get_json(manifest_url, cfg)
-                return self._parse_manifest_response(manifest, cfg, repo, branch)
+                return self._parse_manifest_response(manifest, cfg, repo, branch, ref_commit)
             except urllib.error.HTTPError as exc:
                 manifest_err = f"HTTP {exc.code} khi đọc manifest"
                 if exc.code != 404 or not repo:
@@ -240,7 +288,9 @@ class GitHubAutoUpdater:
         cfg: Dict[str, Any],
         repo: str,
         branch: str,
+        ref_commit: str = "",
     ) -> UpdateCheckResult:
+        effective_ref = ref_commit or branch
         remote_ver = str(manifest.get("version", self.current_version)).strip()
         changelog = str(manifest.get("changelog", "")).strip()
 
@@ -269,7 +319,15 @@ class GitHubAutoUpdater:
                 if not rel_p:
                     continue
                 if not raw_u and repo:
-                    raw_u = f"https://raw.githubusercontent.com/{repo}/{branch}/{rel_p.lstrip('/')}"
+                    raw_u = f"https://raw.githubusercontent.com/{repo}/{effective_ref}/{rel_p.lstrip('/')}"
+                elif (
+                    repo
+                    and effective_ref != branch
+                    and raw_u.startswith(f"https://raw.githubusercontent.com/{repo}/{branch}/")
+                ):
+                    raw_u = raw_u.replace(
+                        f"/{repo}/{branch}/", f"/{repo}/{effective_ref}/", 1
+                    )
                 if not raw_u:
                     continue
 

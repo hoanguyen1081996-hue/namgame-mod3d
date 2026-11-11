@@ -138,15 +138,16 @@ def create_portable_zip(proj_dir: Path, version: str, out_zip: Path) -> Path:
             "Chưa có Mod3D_Standalone.exe. Hãy chạy kèm --rebuild-exe trước."
         )
 
+    repo_label = str(DEFAULT_UPDATE_CONFIG.get("github_repo", "")).strip() or "hoanguyen1081996-hue/namgame-mod3d"
     readme_txt = (
         f"=== HƯỚNG DẪN SỬ DỤNG TOOL MOD 3D ĐỘC LẬP (v{version}) ===\r\n\r\n"
         "1. Giải nén toàn bộ thư mục 'Mod3D_Portable' ra ổ đĩa bất kỳ (VD: D:\\Mod3D_Portable).\r\n"
         "2. Chuột phải vào 'Mod3D_Standalone.exe' -> Chọn 'Run as administrator' (Chạy với quyền Quản trị).\r\n"
         "   (Không cần cài Python, không cần nhập Key License).\r\n"
-        "3. Cập nhật tự động qua GitHub:\r\n"
-        "   - Bấm nút '⟳ Cập nhật' ở góc trên bên phải, điền tên GitHub Repo (VD: ten-anh/mod3d-tool) -> Lưu.\r\n"
-        "   - Từ lần sau, mỗi khi máy Dev đẩy bản sửa lỗi (offset / catalog / EXE mới) lên GitHub,\r\n"
-        "     máy Test chỉ cần mở tool (hoặc bấm 'Kiểm tra ngay' -> 'Cập nhật ngay') là tự động cập nhật!\r\n"
+        f"3. Cập nhật tự động qua GitHub (Đã cài sẵn: {repo_label}):\r\n"
+        "   - Mỗi lần mở tool, hệ thống tự động kiểm tra và đồng bộ ngầm cấu hình offset / catalog mới nhất (< 1 giây).\r\n"
+        "   - Khi có bản nâng cấp giao diện (.exe mới), bấm nút '⟳ Cập nhật' ở góc trên bên phải -> 'Cập nhật ngay'\r\n"
+        "     để tool tự tải, xác thực SHA-256 và tự khởi động lại sang bản mới.\r\n"
     )
 
     out_zip.parent.mkdir(parents=True, exist_ok=True)
