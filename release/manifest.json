@@ -1,10 +1,10 @@
 {
-  "version": "1.3.70",
-  "changelog": "Bản phát hành v1.3.70 tích hợp sẵn GitHub Auto-Update 2 tầng (0s CDN lag)",
+  "version": "1.3.71",
+  "changelog": "v1.3.71: Tích hợp tải ngầm 1 chạm gói Việt hóa (Data.dhp 991MB + version.dll) trực tiếp từ GitHub Releases CDN",
   "exe": {
-    "url": "https://github.com/hoanguyen1081996-hue/namgame-mod3d/releases/download/v1.3.70/Mod3D_Standalone.exe",
-    "sha256": "02e5b261d004bb26089556faf69004b3cf65a5adfad9bd6e08346567d5974a0e",
-    "size": 49806175
+    "url": "https://github.com/hoanguyen1081996-hue/namgame-mod3d/releases/download/v1.3.71/Mod3D_Standalone.exe",
+    "sha256": "c705fac4acfda75111bb33ef8e2049f2966747234651ee15a484daa92b27a0a0",
+    "size": 49853949
   },
   "hotfix_files": [
     {
@@ -16,8 +16,8 @@
     {
       "path": "_guard_catalog.json",
       "url": "https://raw.githubusercontent.com/hoanguyen1081996-hue/namgame-mod3d/main/_guard_catalog.json",
-      "sha256": "22147e24893d3c8ccc5ba67c676481c10ffa3019adc013003076ddd7e7eb03bf",
-      "size": 487
+      "sha256": "10f26639c958ac6b3c5425fbcd6da25fb177287dce20e9e2c2d1207caaf8f98d",
+      "size": 960
     },
     {
       "path": "data/inject_catalog.db",

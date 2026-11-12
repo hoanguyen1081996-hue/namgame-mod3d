@@ -1,13 +1,17 @@
 {
-  "_help": "Link tải đã đóng gói trong EXE. Khách chỉ cần ViethoaGuard.exe. File catalog.json cạnh EXE chỉ dùng khi muốn đổi link mà không build lại.",
+  "_help": "Cấu hình gói Việt hóa lưu trên GitHub Releases CDN tốc độ cao (tự động dự phòng Google Drive nếu mạng chặn). Đổi link tại đây rồi chạy 1_day_hotfix_nhanh.bat để cập nhật nóng < 1s.",
   "files": {
     "dhp": {
-      "url": "https://drive.google.com/file/d/18W_vTPbIF8p6UTx_rGi0CqBTU8b-5Ljp/view?usp=sharing",
-      "sha256": ""
+      "url": "https://github.com/hoanguyen1081996-hue/namgame-mod3d/releases/download/viethoa-pack-v1/Data.dhp",
+      "fallback_url": "https://drive.google.com/file/d/18W_vTPbIF8p6UTx_rGi0CqBTU8b-5Ljp/view?usp=sharing",
+      "sha256": "d0d22815423ef6af73e7000a96f1a975bbe61c5b11088599b807144b645542b7",
+      "size": 1039136807
     },
     "dll": {
-      "url": "https://drive.google.com/file/d/1-fnJBsNqZtRh88-Lil3CPGFuv9E9GpMh/view?usp=sharing",
-      "sha256": ""
+      "url": "https://github.com/hoanguyen1081996-hue/namgame-mod3d/releases/download/viethoa-pack-v1/version.dll",
+      "fallback_url": "https://drive.google.com/file/d/1-fnJBsNqZtRh88-Lil3CPGFuv9E9GpMh/view?usp=sharing",
+      "sha256": "580e3e25e7d749cd7b6371eb568a7cd5d00c4cd79185e5bb0254677f54d0da48",
+      "size": 20992
     }
   }
 }

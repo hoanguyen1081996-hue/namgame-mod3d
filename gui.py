@@ -11,7 +11,9 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -40,7 +42,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from auto_updater import APP_VERSION, GitHubAutoUpdater, UpdateCheckResult
+from auto_updater import (
+    APP_VERSION,
+    GitHubAutoUpdater,
+    UpdateCheckResult,
+    download_pack_asset,
+)
 from main import (
     CatalogItem,
     CatalogRepository,
@@ -445,6 +452,135 @@ class UpdateApplyWorker(QThread):
             )
         except Exception as exc:
             self.apply_done.emit(False, str(exc), "")
+
+
+class VietHoaInstallWorker(QThread):
+    """Luồng nền tải trực tiếp Data.dhp + version.dll từ GitHub Releases CDN, lưu cache, kiểm tra SHA-256 và cài vào game."""
+
+    progress_changed = Signal(int, str, str)  # (pct, dhp_text, dll_text)
+    install_done = Signal(bool, str)  # (ok, message)
+
+    def __init__(self, catalog_path: Path, cache_dir: Path, game_dir: Path) -> None:
+        super().__init__()
+        self.catalog_path = catalog_path
+        self.cache_dir = cache_dir
+        self.game_dir = game_dir
+
+    def run(self) -> None:
+        try:
+            if not self.catalog_path.is_file():
+                raise FileNotFoundError("Không tìm thấy tệp cấu hình _guard_catalog.json.")
+
+            cat = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+            files_cfg = cat.get("files") or {}
+            dhp_cfg = files_cfg.get("dhp") or {}
+            dll_cfg = files_cfg.get("dll") or {}
+
+            dhp_urls = [
+                str(dhp_cfg.get("url", "")),
+                str(dhp_cfg.get("fallback_url", "")),
+            ]
+            dll_urls = [
+                str(dll_cfg.get("url", "")),
+                str(dll_cfg.get("fallback_url", "")),
+            ]
+
+            dhp_status = "• Pack Việt hóa (thay pack trong Data): Data.dhp — Đang kiểm tra cache…"
+            dll_status = "• Proxy chữ / HUD cạnh MSango.bin: version.dll — Chờ tải…"
+            self.progress_changed.emit(2, dhp_status, dll_status)
+
+            def _on_dhp_prog(dl_b: int, tot_b: int) -> None:
+                mb_dl = dl_b / (1024 * 1024)
+                if tot_b > 0:
+                    mb_tot = tot_b / (1024 * 1024)
+                    pct = max(2, min(85, int((dl_b / tot_b) * 85)))
+                    txt = (
+                        f"• Pack Việt hóa (thay pack trong Data): Data.dhp — "
+                        f"Đang tải {mb_dl:.1f} / {mb_tot:.1f} MB ({int(dl_b * 100 / tot_b)}%)"
+                    )
+                else:
+                    pct = 45
+                    txt = f"• Pack Việt hóa (thay pack trong Data): Data.dhp — Đang tải {mb_dl:.1f} MB…"
+                self.progress_changed.emit(pct, txt, dll_status)
+
+            cached_dhp, dhp_cached = download_pack_asset(
+                urls=dhp_urls,
+                cache_file=self.cache_dir / "Data.dhp",
+                expected_magic=b"1PHD",
+                expected_sha256=str(dhp_cfg.get("sha256", "")),
+                expected_size=int(dhp_cfg.get("size", 0) or 0),
+                progress_cb=_on_dhp_prog,
+            )
+            dhp_done_note = "Từ cache máy" if dhp_cached else "Đã tải xong & khớp SHA-256"
+            dhp_status = f"• Pack Việt hóa (thay pack trong Data): Data.dhp — {dhp_done_note}"
+
+            def _on_dll_prog(dl_b: int, tot_b: int) -> None:
+                kb_dl = dl_b / 1024
+                pct = 86 + (int((dl_b / tot_b) * 6) if tot_b > 0 else 3)
+                txt = f"• Proxy chữ / HUD cạnh MSango.bin: version.dll — Đang tải {kb_dl:.1f} KB…"
+                self.progress_changed.emit(min(pct, 92), dhp_status, txt)
+
+            cached_dll, dll_cached = download_pack_asset(
+                urls=dll_urls,
+                cache_file=self.cache_dir / "version.dll",
+                expected_magic=b"MZ",
+                expected_sha256=str(dll_cfg.get("sha256", "")),
+                expected_size=int(dll_cfg.get("size", 0) or 0),
+                progress_cb=_on_dll_prog,
+            )
+            dll_done_note = "Từ cache máy" if dll_cached else "Đã tải xong & khớp SHA-256"
+            dll_status = f"• Proxy chữ / HUD cạnh MSango.bin: version.dll — {dll_done_note}"
+            self.progress_changed.emit(93, dhp_status, dll_status)
+
+            # Nếu game hoặc trình khởi chạy đang mở khóa file, tự đóng nhẹ để ghi an toàn
+            ctx = Win32SystemContext()
+            if (
+                ctx.find_process_id(PROCESS_TARGET) is not None
+                or ctx.find_process_id("DHPlatform.bin") is not None
+            ):
+                cflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+                for proc_img in ("MSango.bin", "DHPlatform.bin"):
+                    subprocess.run(
+                        ["taskkill", "/F", "/IM", proc_img],
+                        capture_output=True,
+                        creationflags=cflags,
+                    )
+                time.sleep(0.8)
+
+            dst_dhp = self.game_dir / "Data" / "Data.dhp"
+            dst_dll = self.game_dir / "version.dll"
+            dst_dhp.parent.mkdir(parents=True, exist_ok=True)
+
+            try:
+                if dst_dhp.exists():
+                    os.chmod(dst_dhp, stat.S_IREAD | stat.S_IWRITE)
+                if dst_dll.exists():
+                    os.chmod(dst_dll, stat.S_IREAD | stat.S_IWRITE)
+
+                self.progress_changed.emit(
+                    96,
+                    "• Pack Việt hóa (thay pack trong Data): Data.dhp — Đang chép vào thư mục game…",
+                    dll_status,
+                )
+                shutil.copy2(cached_dhp, dst_dhp)
+                shutil.copy2(cached_dll, dst_dll)
+
+                # Tự động khóa Read-Only Data.dhp để Launcher không tải bản tiếng Trung đè lại
+                os.chmod(dst_dhp, stat.S_IREAD)
+            except PermissionError as exc:
+                raise RuntimeError(
+                    "Không ghi được vào thư mục game (thiếu quyền Admin hoặc file đang mở). "
+                    "Bản tải đã lưu sẵn trong cache — hãy đóng game / chạy quyền Admin rồi bấm lại!"
+                ) from exc
+
+            final_dhp = "• Pack Việt hóa (thay pack trong Data): Data.dhp — Đã cài & khóa bảo vệ"
+            final_dll = "• Proxy chữ / HUD cạnh MSango.bin: version.dll — Đã cài cạnh MSango.bin"
+            self.progress_changed.emit(100, final_dhp, final_dll)
+            self.install_done.emit(
+                True, "Đã cài đặt gói Việt hóa (Data.dhp + version.dll) và khóa chống cập nhật đè!"
+            )
+        except Exception as exc:
+            self.install_done.emit(False, str(exc))
 
 
 class UpdateDialog(QDialog):
@@ -1899,19 +2035,19 @@ class Mod3DMainWindow(QMainWindow):
         cp_lay.addWidget(self.vh_progress)
 
         pack_btn_row = QHBoxLayout()
-        btn_dl_both = QPushButton("Tải & cài cả hai")
-        btn_dl_both.setObjectName("primaryBtn")
-        btn_dl_both.clicked.connect(self._on_open_pack_links)
+        self.btn_dl_both = QPushButton("Tải & cài cả hai")
+        self.btn_dl_both.setObjectName("primaryBtn")
+        self.btn_dl_both.clicked.connect(self._on_download_and_install_pack)
 
-        btn_pick_dhp = QPushButton("Chọn Data.dhp…")
-        btn_pick_dhp.clicked.connect(self._on_install_local_dhp)
+        self.btn_pick_dhp = QPushButton("Chọn Data.dhp…")
+        self.btn_pick_dhp.clicked.connect(self._on_install_local_dhp)
 
-        btn_pick_dll = QPushButton("Chọn version.dll…")
-        btn_pick_dll.clicked.connect(self._on_install_local_dll)
+        self.btn_pick_dll = QPushButton("Chọn version.dll…")
+        self.btn_pick_dll.clicked.connect(self._on_install_local_dll)
 
-        pack_btn_row.addWidget(btn_dl_both)
-        pack_btn_row.addWidget(btn_pick_dhp)
-        pack_btn_row.addWidget(btn_pick_dll)
+        pack_btn_row.addWidget(self.btn_dl_both)
+        pack_btn_row.addWidget(self.btn_pick_dhp)
+        pack_btn_row.addWidget(self.btn_pick_dll)
         pack_btn_row.addStretch(1)
         cp_lay.addLayout(pack_btn_row)
 
@@ -1983,23 +2119,56 @@ class Mod3DMainWindow(QMainWindow):
         except Exception as exc:
             self.toast.show_toast(f"Lỗi đổi quyền Data.dhp: {exc}", "err")
 
-    def _on_open_pack_links(self) -> None:
-        if not self.guard_catalog_path.exists():
-            self.toast.show_toast("Không tìm thấy _guard_catalog.json.", "warn")
+    def _on_download_and_install_pack(self) -> None:
+        if getattr(self, "_vh_worker", None) is not None and self._vh_worker.isRunning():
+            self.toast.show_toast("Đang tải & cài gói Việt hóa, vui lòng chờ…", "warn")
             return
-        try:
-            cat = json.loads(self.guard_catalog_path.read_text(encoding="utf-8"))
-            dhp_url = cat.get("files", {}).get("dhp", {}).get("url", "")
-            dll_url = cat.get("files", {}).get("dll", {}).get("url", "")
-            if dhp_url:
-                os.startfile(dhp_url)
-            if dll_url:
-                os.startfile(dll_url)
-            self.toast.show_toast(
-                "Đã mở link tải Data.dhp & version.dll từ _guard_catalog.json.", "ok"
-            )
-        except Exception as exc:
-            self.toast.show_toast(f"Lỗi đọc _guard_catalog.json: {exc}", "err")
+
+        if not self.game_folder:
+            self._on_pick_game_folder()
+            if not self.game_folder:
+                self.toast.show_toast(
+                    "Chưa chọn thư mục game. Bấm Đổi… rồi chọn folder có MSango.bin.",
+                    "warn",
+                )
+                return
+
+        if not self.guard_catalog_path.exists():
+            self.toast.show_toast("Không tìm thấy _guard_catalog.json.", "err")
+            return
+
+        self.btn_dl_both.setEnabled(False)
+        self.btn_dl_both.setText("Đang tải & cài…")
+        self.btn_pick_dhp.setEnabled(False)
+        self.btn_pick_dll.setEnabled(False)
+        self.vh_progress.setValue(1)
+
+        cache_dir = self.app_dir / "cache"
+        self._vh_worker = VietHoaInstallWorker(
+            catalog_path=self.guard_catalog_path,
+            cache_dir=cache_dir,
+            game_dir=Path(self.game_folder),
+        )
+        self._vh_worker.progress_changed.connect(self._on_vh_install_progress)
+        self._vh_worker.install_done.connect(self._on_vh_install_done)
+        self._vh_worker.start()
+
+    def _on_vh_install_progress(self, pct: int, dhp_txt: str, dll_txt: str) -> None:
+        self.vh_progress.setValue(pct)
+        self.lbl_dhp_info.setText(dhp_txt)
+        self.lbl_dll_info.setText(dll_txt)
+
+    def _on_vh_install_done(self, ok: bool, msg: str) -> None:
+        self.btn_dl_both.setEnabled(True)
+        self.btn_dl_both.setText("Tải & cài cả hai")
+        self.btn_pick_dhp.setEnabled(True)
+        self.btn_pick_dll.setEnabled(True)
+        self._refresh_viethoa_status()
+        if ok:
+            self.toast.show_toast(msg, "ok", 4000)
+        else:
+            self.vh_progress.setValue(0)
+            self.toast.show_toast(f"Lỗi cài Việt hóa: {msg}", "err", 4500)
 
     def _on_install_local_dhp(self) -> None:
         if not self.game_folder:

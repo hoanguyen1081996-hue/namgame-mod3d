@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
+import html
+from http.cookiejar import CookieJar
 import json
 import os
 from pathlib import Path
@@ -25,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-APP_VERSION = "1.3.70"
+APP_VERSION = "1.3.71"
 
 DEFAULT_UPDATE_CONFIG: Dict[str, Any] = {
     "_comment": "Cấu hình tự động cập nhật từ GitHub Repo chính thức.",
@@ -566,3 +568,150 @@ class GitHubAutoUpdater:
             creationflags=creation_flags,
             close_fds=True,
         )
+
+
+def _normalize_pack_url(url: str) -> str:
+    """Chuyển link chia sẻ Google Drive sang link tải trực tiếp nếu cần; giữ nguyên link GitHub Releases."""
+    u = url.strip()
+    m = re.search(r"drive\.google\.com/file/d/([A-Za-z0-9_-]+)", u)
+    if not m:
+        m = re.search(r"drive\.google\.com/open\?id=([A-Za-z0-9_-]+)", u)
+    if m:
+        fid = m.group(1)
+        return f"https://drive.usercontent.google.com/download?id={fid}&export=download&confirm=t"
+    return u
+
+
+def download_pack_asset(
+    urls: List[str],
+    cache_file: Path,
+    expected_magic: bytes,
+    expected_sha256: str = "",
+    expected_size: int = 0,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+) -> Tuple[Path, bool]:
+    """
+    Tải gói tài nguyên (`Data.dhp` hoặc `version.dll`) từ GitHub Releases CDN (kèm fallback Google Drive),
+    lưu đệm vào `cache_file`, xác thực magic header (`1PHD` / `MZ`) và mã băm SHA-256.
+    Trả về `(cache_file, used_cache)`.
+    """
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    exp_sha = expected_sha256.strip().lower()
+
+    # 1. Tận dụng ngay bản lưu trong cache nếu đã hợp lệ (cài lại tức thời 0 giây)
+    if cache_file.is_file():
+        try:
+            with cache_file.open("rb") as f:
+                head = f.read(len(expected_magic))
+            if head == expected_magic:
+                if exp_sha:
+                    if sha256_file(cache_file) == exp_sha:
+                        sz = cache_file.stat().st_size
+                        if progress_cb:
+                            progress_cb(sz, sz)
+                        return cache_file, True
+                elif expected_size <= 0 or cache_file.stat().st_size == expected_size:
+                    sz = cache_file.stat().st_size
+                    if progress_cb:
+                        progress_cb(sz, sz)
+                    return cache_file, True
+        except Exception:
+            pass
+
+    clean_urls = [u.strip() for u in urls if u and u.strip()]
+    if not clean_urls:
+        raise ValueError(f"Chưa cấu hình URL tải cho {cache_file.name} trong _guard_catalog.json.")
+
+    ua = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    )
+    part_path = cache_file.with_name(f"{cache_file.name}.part")
+    last_err: Optional[Exception] = None
+
+    for raw_url in clean_urls:
+        try:
+            part_path.unlink(missing_ok=True)
+            cj = CookieJar()
+            ctx = ssl.create_default_context()
+            opener = urllib.request.build_opener(
+                urllib.request.HTTPSHandler(context=ctx),
+                urllib.request.HTTPCookieProcessor(cj),
+            )
+            dl_url = _normalize_pack_url(raw_url)
+            req = urllib.request.Request(dl_url, headers={"User-Agent": ua})
+            resp = opener.open(req, timeout=45)
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+
+            # Xử lý trang xác nhận quét virus file lớn của Google Drive (nếu dùng fallback Drive)
+            if "text/html" in ctype:
+                body = resp.read().decode("utf-8", errors="replace")
+                resp.close()
+                if "quota" in body.lower() or "too many users" in body.lower():
+                    raise RuntimeError("Google Drive hết lượt tải tạm thời.")
+                act_m = re.search(r'<form[^>]+action="([^"]+)"', body)
+                inputs = dict(
+                    re.findall(r'<input[^>]+name="([^"]+)"[^>]+value="([^"]*)"', body)
+                )
+                if not inputs:
+                    raise RuntimeError("Máy chủ trả về trang HTML thay vì tệp nhị phân.")
+                action = (
+                    html.unescape(act_m.group(1))
+                    if act_m
+                    else "https://drive.usercontent.google.com/download"
+                )
+                req2 = urllib.request.Request(
+                    f"{action}?{urllib.parse.urlencode(inputs)}",
+                    headers={"User-Agent": ua},
+                )
+                resp = opener.open(req2, timeout=60)
+
+            try:
+                total = int(resp.headers.get("Content-Length", "0") or 0) or expected_size
+                downloaded = 0
+                hasher = hashlib.sha256()
+                first_chunk = b""
+                last_emit = 0.0
+
+                with part_path.open("wb") as out_f:
+                    while True:
+                        chunk = resp.read(512 * 1024)
+                        if not chunk:
+                            break
+                        if not first_chunk:
+                            first_chunk = chunk[: max(len(expected_magic), 16)]
+                            if not first_chunk.startswith(expected_magic):
+                                raise ValueError(
+                                    f"Tệp tải về không đúng định dạng {cache_file.name} "
+                                    f"(thiếu chữ ký {expected_magic.decode('latin1', errors='replace')})."
+                                )
+                        out_f.write(chunk)
+                        hasher.update(chunk)
+                        downloaded += len(chunk)
+
+                        now = time.monotonic()
+                        if progress_cb and (now - last_emit >= 0.10):
+                            last_emit = now
+                            progress_cb(downloaded, total)
+            finally:
+                resp.close()
+
+            if downloaded == 0:
+                raise ValueError(f"Tải về tệp rỗng ({cache_file.name}).")
+            if progress_cb:
+                progress_cb(downloaded, total or downloaded)
+
+            got_sha = hasher.hexdigest().lower()
+            if exp_sha and got_sha != exp_sha:
+                raise ValueError(
+                    f"Sai mã kiểm tra SHA-256 của {cache_file.name} "
+                    f"(nhận {got_sha[:12]}…, cần {exp_sha[:12]}…)."
+                )
+
+            os.replace(part_path, cache_file)
+            return cache_file, False
+        except Exception as exc:
+            part_path.unlink(missing_ok=True)
+            last_err = exc
+
+    raise RuntimeError(f"Không tải được {cache_file.name}: {last_err}")
